@@ -12,8 +12,52 @@ export interface User {
     level: number;
     badges: Badge[];
     completedModules: string[];
+    activityLog?: ActivityLogEntry[];
+    streakData?: {
+        current: number;
+        longest: number;
+        lastActivityDate?: string;
+    };
+    studyTime?: {
+        total: number;
+        thisWeek: number;
+    };
+    skillsProgress?: SkillProgress[];
+    questsCompleted?: number;
     createdAt: string;
     updatedAt: string;
+}
+
+export interface ActivityLogEntry {
+    type: string;
+    description: string;
+    xp?: number;
+    timestamp: string;
+}
+
+export interface SkillProgress {
+    skill: string;
+    level: 'beginner' | 'intermediate' | 'advanced' | 'mastered';
+    lastPracticed: string;
+    timesCompleted: number;
+}
+
+export interface DashboardStats {
+    streak: number;
+    longestStreak: number;
+    skillsMastered: number;
+    studyTime: string;
+    questsCompleted: number;
+    recentActivity: Array<{
+        type: string;
+        description: string;
+        xp?: number;
+        time: string;
+    }>;
+    badges: number;
+    totalXP: number;
+    level: number;
+    skillsProgress: SkillProgress[];
 }
 
 export interface Badge {

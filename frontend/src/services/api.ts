@@ -4,6 +4,7 @@ import type {
     LoginCredentials,
     RegisterData,
     User,
+    DashboardStats,
     Roadmap,
     Assessment,
     AptitudeSession,
@@ -63,6 +64,11 @@ export const authService = {
 
     updateProfile: async (updates: Partial<User['profile']>): Promise<User> => {
         const { data } = await api.patch<ApiResponse<User>>('/auth/profile', updates);
+        return data.data;
+    },
+
+    getStats: async (): Promise<DashboardStats> => {
+        const { data } = await api.get<ApiResponse<DashboardStats>>('/auth/stats');
         return data.data;
     },
 };

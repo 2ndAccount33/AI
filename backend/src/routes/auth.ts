@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
 import { User } from '../models/User.js';
 import { authenticate } from '../middleware/auth.js';
+import { getUserStats } from '../utils/activityTracker.js';
 
 const router = Router();
 
@@ -149,6 +150,11 @@ router.get('/profile', authenticate, async (req, res, next) => {
                 level: user.level,
                 badges: user.badges,
                 completedModules: user.completedModules,
+                activityLog: user.activityLog?.slice(-10) || [],
+                streakData: user.streakData || { current: 0, longest: 0 },
+                questsCompleted: user.questsCompleted || 0,
+                skillsProgress: user.skillsProgress || [],
+                studyTime: user.studyTime || { total: 0, thisWeek: 0 },
                 createdAt: user.createdAt,
                 updatedAt: user.updatedAt,
             },
@@ -187,6 +193,16 @@ router.patch('/profile', authenticate, async (req, res, next) => {
                 level: user.level,
             },
         });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get dashboard stats - REAL DATA
+router.get('/stats', authenticate, async (req, res, next) => {
+    try {
+        const stats = await getUserStats(req.userId!);
+        res.json({ success: true, data: stats });
     } catch (error) {
         next(error);
     }

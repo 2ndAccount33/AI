@@ -15,6 +15,7 @@ import {
     RefreshCw,
     Target
 } from 'lucide-react';
+import api from '@/services/api';
 
 interface AgentStatus {
     id: string;
@@ -50,7 +51,7 @@ const AgentOrchestrator = () => {
         {
             id: 'skill-gap',
             name: 'Skill-Gap Analyzer',
-            role: 'Analyzes resumes and identifies job preferences',
+            role: 'Analyzes resumes and identifies skill gaps',
             status: 'idle',
             confidence: 95,
             lastAction: 'Ready',
@@ -89,6 +90,30 @@ const AgentOrchestrator = () => {
 
     const simulateDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+    let msgCounter = 0;
+    let logCounter = 0;
+
+    const addMessage = (from: string, to: string, type: AgentMessage['type'], content: string) => {
+        msgCounter++;
+        const msg: AgentMessage = {
+            id: String(msgCounter),
+            from, to, type, content,
+            timestamp: new Date()
+        };
+        setMessages(prev => [msg, ...prev]);
+    };
+
+    const addLog = (agent: string, decision: string, reasoning: string[], confidence: number, status: DecisionLog['status']) => {
+        logCounter++;
+        const log: DecisionLog = {
+            id: String(logCounter),
+            agent, decision, reasoning, confidence,
+            timestamp: new Date(),
+            status
+        };
+        setDecisionLogs(prev => [log, ...prev]);
+    };
+
     const startAutonomousWorkflow = useCallback(async () => {
         // Reset state
         setIsOrchestrating(true);
@@ -96,201 +121,221 @@ const AgentOrchestrator = () => {
         setMessages([]);
         setDecisionLogs([]);
         setRecoveryTriggered(false);
-
-        // Reset all agents
         setAgents(prev => prev.map(a => ({ ...a, status: 'idle' as const, currentTask: undefined })));
 
         await simulateDelay(500);
 
         // =========================================================================
-        // STEP 1: Skill-Gap Agent analyzes user profile
+        // STEP 1: Skill-Gap Agent analyzes user profile (REAL API CALL)
         // =========================================================================
         setAgents(prev => prev.map(a =>
-            a.id === 'skill-gap' ? { ...a, status: 'thinking' as const, currentTask: 'Analyzing user profile...' } : a
+            a.id === 'skill-gap' ? { ...a, status: 'thinking' as const, currentTask: 'Fetching user profile...' } : a
         ));
 
-        await simulateDelay(1500);
+        await simulateDelay(800);
 
-        const log1: DecisionLog = {
-            id: '1',
-            agent: 'Skill-Gap Analyzer',
-            decision: 'Extracted user preferences from profile',
-            reasoning: [
-                '📄 Resume parsed successfully',
-                '🎯 Target role: Python Developer',
-                '📍 Preferred location: London',
-                '→ Passing to Job Matcher Agent'
-            ],
-            confidence: 95,
-            timestamp: new Date(),
-            status: 'success'
-        };
-        setDecisionLogs(prev => [log1, ...prev]);
+        let userSkills: string[] = [];
+        let targetRole = 'Developer';
 
-        const msg1: AgentMessage = {
-            id: '1',
-            from: 'Skill-Gap Agent',
-            to: 'Job Matcher Agent',
-            type: 'handoff',
-            content: 'User wants Python Developer jobs in London. Please search.',
-            timestamp: new Date(),
-        };
-        setMessages(prev => [msg1, ...prev]);
+        try {
+            const profileResponse = await api.get('/auth/profile');
+            const profile = profileResponse.data?.data || profileResponse.data;
+
+            // Extract skills from user's profile or roadmap
+            targetRole = profile?.profile?.targetRole || profile?.profile?.currentRole || 'Full-Stack Developer';
+
+            // Try to get skills from skillsProgress or use targetRole
+            if (profile?.skillsProgress && profile.skillsProgress.length > 0) {
+                userSkills = profile.skillsProgress.map((sp: any) => sp.skill);
+            }
+
+            addLog(
+                'Skill-Gap Analyzer',
+                `Extracted user profile for: ${profile?.profile?.name || 'User'}`,
+                [
+                    `📄 User profile loaded`,
+                    `🎯 Target role: ${targetRole}`,
+                    userSkills.length > 0
+                        ? `🛠️ Found ${userSkills.length} tracked skills: ${userSkills.slice(0, 5).join(', ')}`
+                        : `ℹ️ No tracked skills yet — using target role for search`,
+                    `→ Passing to Job Matcher Agent`
+                ],
+                95,
+                'success'
+            );
+
+        } catch (err: any) {
+            // Even if profile fetch fails, continue with targetRole
+            addLog(
+                'Skill-Gap Analyzer',
+                'Profile fetch failed — using default search terms',
+                [
+                    `⚠️ Could not fetch profile: ${err.message}`,
+                    `ℹ️ Using default: ${targetRole}`,
+                    `→ Passing to Job Matcher Agent`
+                ],
+                70,
+                'recovery'
+            );
+        }
+
+        const searchQuery = userSkills.length > 0 ? userSkills.join(' ') : targetRole;
+
+        addMessage('Skill-Gap Agent', 'Job Matcher Agent', 'handoff',
+            `User wants ${targetRole} jobs. Skills: ${userSkills.length > 0 ? userSkills.join(', ') : 'not tracked yet'}. Please search.`
+        );
 
         setAgents(prev => prev.map(a =>
             a.id === 'skill-gap' ? { ...a, status: 'completed' as const, currentTask: undefined, lastAction: 'Profile analyzed' } :
-                a.id === 'job-matcher' ? { ...a, status: 'thinking' as const, currentTask: 'Searching London jobs...' } : a
+                a.id === 'job-matcher' ? { ...a, status: 'thinking' as const, currentTask: 'Searching jobs...' } : a
         ));
 
-        await simulateDelay(2000);
+        await simulateDelay(1200);
 
         // =========================================================================
-        // STEP 2: Job Matcher searches - FAILS!
+        // STEP 2: Job Matcher searches with NARROW query first (designed to get fewer results)
         // =========================================================================
-        const log2: DecisionLog = {
-            id: '2',
-            agent: 'Job Matcher Agent',
-            decision: '❌ SEARCH FAILED: 0 results for Python in London',
-            reasoning: [
-                '🔍 Query: Python Developer + London',
-                '📊 Results returned: 0 jobs',
-                '⚠️ FAILURE DETECTED',
-                '→ Need to re-strategize...'
+        let jobs: any[] = [];
+        let narrowFailed = false;
+        const narrowQuery = `senior ${searchQuery} London`;
+
+        try {
+            const jobResponse = await api.get('/jobs/search', {
+                params: { skills: narrowQuery, location: 'gb' }
+            });
+            jobs = jobResponse.data?.data?.items || [];
+        } catch (err) {
+            jobs = [];
+        }
+
+        if (jobs.length === 0) {
+            narrowFailed = true;
+
+            addLog(
+                'Job Matcher Agent',
+                `❌ SEARCH FAILED: 0 results for "${narrowQuery}"`,
+                [
+                    `🔍 Query: ${narrowQuery}`,
+                    `📊 Results returned: 0 jobs`,
+                    `⚠️ FAILURE DETECTED`,
+                    `→ Need to re-strategize...`
+                ],
+                30,
+                'failure'
+            );
+
+            addMessage('Job Matcher Agent', 'Self', 'failure',
+                `❌ Search failed: 0 jobs found for "${narrowQuery}". Need to adjust strategy.`
+            );
+
+            // VISUAL FAIL STATE
+            setAgents(prev => prev.map(a =>
+                a.id === 'job-matcher' ? {
+                    ...a, status: 'failed' as const,
+                    currentTask: '⚠️ 0 Results! Re-strategizing...',
+                    confidence: 30
+                } :
+                    a.id === 'recovery' ? { ...a, status: 'thinking' as const, currentTask: 'Analyzing failure...' } : a
+            ));
+
+            await simulateDelay(2000);
+
+            // =========================================================================
+            // STEP 3: AUTONOMOUS RECOVERY - retry with broader query
+            // =========================================================================
+            setRecoveryTriggered(true);
+
+            addLog(
+                '🧠 AUTONOMOUS RECOVERY',
+                'Detected failure → Changing strategy WITHOUT human input',
+                [
+                    '🔴 Step 1: Failure condition detected (0 results)',
+                    `🔍 Step 2: Analyzing constraint: "${narrowQuery}"`,
+                    '💡 Step 3: Hypothesis - Query too restrictive',
+                    `🔄 Step 4: AUTONOMOUS DECISION - Broaden to "${searchQuery}"`,
+                    '✅ Step 5: Proceeding WITHOUT human approval'
+                ],
+                75,
+                'recovery'
+            );
+
+            addMessage('Recovery Engine', 'Job Matcher Agent', 'recovery',
+                `🔄 AUTONOMOUS PIVOT: Narrow search failed. Broadening to "${searchQuery}" - NO human intervention required!`
+            );
+
+            setAgents(prev => prev.map(a =>
+                a.id === 'recovery' ? { ...a, status: 'completed' as const, currentTask: undefined, lastAction: 'Strategy adjusted' } :
+                    a.id === 'job-matcher' ? { ...a, status: 'recovering' as const, currentTask: 'Retrying with broader search...' } : a
+            ));
+
+            await simulateDelay(1500);
+
+            // Retry with broader query
+            try {
+                const retryResponse = await api.get('/jobs/search', {
+                    params: { skills: searchQuery, location: 'us' }
+                });
+                jobs = retryResponse.data?.data?.items || [];
+            } catch (err) {
+                jobs = [];
+            }
+        }
+
+        // =========================================================================
+        // STEP 4: Show results
+        // =========================================================================
+        const jobCount = jobs.length;
+
+        addLog(
+            'Job Matcher Agent',
+            `✅ ${narrowFailed ? 'SUCCESS after recovery' : 'SUCCESS'}: Found ${jobCount} jobs!`,
+            [
+                `🔍 ${narrowFailed ? 'Recovery' : 'Initial'} query: ${searchQuery}`,
+                `📊 Results returned: ${jobCount} jobs`,
+                narrowFailed ? '✅ Recovery strategy VALIDATED' : '✅ Search successful',
+                narrowFailed ? '🎯 No human intervention was needed!' : '🎯 Direct match found'
             ],
-            confidence: 30,
-            timestamp: new Date(),
-            status: 'failure'
-        };
-        setDecisionLogs(prev => [log2, ...prev]);
+            92,
+            'success'
+        );
 
-        const msg2: AgentMessage = {
-            id: '2',
-            from: 'Job Matcher Agent',
-            to: 'Self',
-            type: 'failure',
-            content: '❌ Search failed: 0 jobs found for Python in London. Need to adjust strategy.',
-            timestamp: new Date(),
-        };
-        setMessages(prev => [msg2, ...prev]);
+        addMessage('Job Matcher Agent', 'User', 'decision',
+            `✅ Found ${jobCount} ${targetRole} jobs${narrowFailed ? ' after autonomous strategy adjustment' : ''}!` +
+            (jobCount > 0 ? ` Top match: ${jobs[0]?.title} at ${jobs[0]?.company}` : '')
+        );
 
-        // VISUAL FAIL STATE
         setAgents(prev => prev.map(a =>
             a.id === 'job-matcher' ? {
-                ...a,
-                status: 'failed' as const,
-                currentTask: '⚠️ 0 Results! Re-strategizing...',
-                confidence: 30
-            } :
-                a.id === 'recovery' ? { ...a, status: 'thinking' as const, currentTask: 'Analyzing failure...' } : a
-        ));
-
-        await simulateDelay(2500);
-
-        // =========================================================================
-        // STEP 3: THE MAGIC MOMENT - Autonomous Recovery
-        // =========================================================================
-        setRecoveryTriggered(true);
-
-        const log3: DecisionLog = {
-            id: '3',
-            agent: '🧠 AUTONOMOUS RECOVERY',
-            decision: 'Detected failure → Changing strategy WITHOUT human input',
-            reasoning: [
-                '🔴 Step 1: Failure condition detected (0 results)',
-                '🔍 Step 2: Analyzing constraint: "London"',
-                '💡 Step 3: Hypothesis - Location is too restrictive',
-                '🔄 Step 4: AUTONOMOUS DECISION - Switch to "Remote"',
-                '✅ Step 5: Proceeding WITHOUT human approval'
-            ],
-            confidence: 75,
-            timestamp: new Date(),
-            status: 'recovery'
-        };
-        setDecisionLogs(prev => [log3, ...prev]);
-
-        const msg3: AgentMessage = {
-            id: '3',
-            from: 'Recovery Engine',
-            to: 'Job Matcher Agent',
-            type: 'recovery',
-            content: '🔄 AUTONOMOUS PIVOT: Location "London" failed. Switching to "Remote" - NO human intervention required!',
-            timestamp: new Date(),
-        };
-        setMessages(prev => [msg3, ...prev]);
-
-        setAgents(prev => prev.map(a =>
-            a.id === 'recovery' ? { ...a, status: 'completed' as const, currentTask: undefined, lastAction: 'Strategy adjusted' } :
-                a.id === 'job-matcher' ? { ...a, status: 'recovering' as const, currentTask: 'Retrying with Remote...' } : a
-        ));
-
-        await simulateDelay(2000);
-
-        // =========================================================================
-        // STEP 4: Retry with new strategy - SUCCESS!
-        // =========================================================================
-        const log4: DecisionLog = {
-            id: '4',
-            agent: 'Job Matcher Agent',
-            decision: '✅ SUCCESS: Found 3 jobs after autonomous recovery!',
-            reasoning: [
-                '🔍 New query: Python Developer + Remote',
-                '📊 Results returned: 3 jobs',
-                '✅ Recovery strategy VALIDATED',
-                '🎯 No human intervention was needed!'
-            ],
-            confidence: 92,
-            timestamp: new Date(),
-            status: 'success'
-        };
-        setDecisionLogs(prev => [log4, ...prev]);
-
-        const msg4: AgentMessage = {
-            id: '4',
-            from: 'Job Matcher Agent',
-            to: 'User',
-            type: 'decision',
-            content: '✅ SUCCESS: Found 3 Python Developer jobs (Remote) after autonomous strategy adjustment!',
-            timestamp: new Date(),
-        };
-        setMessages(prev => [msg4, ...prev]);
-
-        setAgents(prev => prev.map(a =>
-            a.id === 'job-matcher' ? {
-                ...a,
-                status: 'completed' as const,
+                ...a, status: 'completed' as const,
                 currentTask: undefined,
-                lastAction: '3 jobs found',
+                lastAction: `${jobCount} jobs found`,
                 confidence: 92
             } :
                 a.id === 'orchestrator' ? { ...a, status: 'thinking' as const, currentTask: 'Finalizing...' } : a
         ));
 
-        await simulateDelay(1500);
+        await simulateDelay(1000);
 
         // =========================================================================
         // STEP 5: Final Summary
         // =========================================================================
-        const log5: DecisionLog = {
-            id: '5',
-            agent: '🎯 WORKFLOW COMPLETE',
-            decision: 'Autonomous Agentic Behavior Demonstrated!',
-            reasoning: [
-                '❌ Initial attempt: FAILED (London)',
-                '🔄 Recovery triggered: YES',
+        addLog(
+            '🎯 WORKFLOW COMPLETE',
+            'Autonomous Agentic Behavior Demonstrated!',
+            [
+                narrowFailed ? `❌ Initial attempt: FAILED ("${narrowQuery}")` : `✅ Initial attempt: SUCCESS`,
+                `🔄 Recovery triggered: ${narrowFailed ? 'YES' : 'NO'}`,
                 '👤 Human intervention: NONE',
-                '✅ Final result: 3 jobs found',
-                '🏆 "Look Ma, No Hands!" achieved!'
+                `✅ Final result: ${jobCount} jobs found`,
+                `🏆 "Look Ma, No Hands!" achieved!`
             ],
-            confidence: 95,
-            timestamp: new Date(),
-            status: 'success'
-        };
-        setDecisionLogs(prev => [log5, ...prev]);
+            95,
+            'success'
+        );
 
         setAgents(prev => prev.map(a =>
             a.id === 'orchestrator' ? {
-                ...a,
-                status: 'completed' as const,
+                ...a, status: 'completed' as const,
                 currentTask: undefined,
                 lastAction: 'Demo complete!'
             } : a

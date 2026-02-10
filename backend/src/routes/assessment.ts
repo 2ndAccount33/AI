@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth.js';
 import { Assessment } from '../models/Assessment.js';
 import { User } from '../models/User.js';
 import { aiService } from '../services/aiService.js';
+import { awardXP, completeQuest, checkAndAwardMilestoneBadges } from '../utils/activityTracker.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -120,12 +121,13 @@ router.post('/:id/quest/:questId/answer', authenticate, async (req, res, next) =
         if (correct) {
             quest.earnedPoints = (quest.earnedPoints || 0) + question.points;
 
-            // Update user XP
-            const user = await User.findById(req.userId);
-            if (user) {
-                user.xp += question.points;
-                await user.save();
-            }
+            // Award XP with activity tracking
+            await awardXP(
+                req.userId!,
+                question.points,
+                `Correct answer in ${assessment.title}`
+            );
+            await checkAndAwardMilestoneBadges(req.userId!);
         }
 
         quest.status = 'in_progress';
@@ -182,12 +184,13 @@ router.post('/:id/quest/:questId/submit', authenticate, async (req, res, next) =
                 assessment.quests[questIndex + 1].status = 'available';
             }
 
-            // Update user XP
-            const user = await User.findById(req.userId);
-            if (user) {
-                user.xp += quest.totalPoints;
-                await user.save();
-            }
+            // Track quest completion with activity tracking
+            await completeQuest(
+                req.userId!,
+                quest.title || assessment.title,
+                quest.totalPoints
+            );
+            await checkAndAwardMilestoneBadges(req.userId!);
         }
 
         await assessment.save();

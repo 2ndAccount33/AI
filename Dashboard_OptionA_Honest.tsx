@@ -1,8 +1,5 @@
-import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
-import { authService } from '@/services/api';
 import { Link } from 'react-router-dom';
-import type { DashboardStats } from '@/types';
 import {
     Trophy,
     Target,
@@ -14,8 +11,6 @@ import {
     ChevronRight,
     Sparkles,
     AlertCircle,
-    Flame,
-    Loader2,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -34,55 +29,41 @@ const item = {
 
 export default function Dashboard() {
     const { user } = useAuthStore();
-    const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        async function fetchStats() {
-            try {
-                const data = await authService.getStats();
-                setStats(data);
-            } catch (error) {
-                console.error('Failed to fetch stats:', error);
-            } finally {
-                setLoading(false);
-            }
-        }
-        fetchStats();
-    }, []);
 
     const xpForNextLevel = (user?.level || 1) * 1000;
     const xpProgress = ((user?.xp || 0) % 1000) / 10;
 
-    // REAL stats from API - no fake data
-    const quickStats = [
-        {
-            label: 'Learning Streak',
-            value: stats ? `${stats.streak} days` : '0 days',
-            icon: Flame,
-            color: 'from-orange-500 to-red-500'
+    // ACTUAL DATA from user object
+    const actualStats = [
+        { 
+            label: 'Current Level', 
+            value: user?.level || 1, 
+            icon: Trophy, 
+            color: 'from-purple-500 to-pink-500',
+            isReal: true 
         },
-        {
-            label: 'Skills Mastered',
-            value: stats?.skillsMastered || 0,
-            icon: Star,
-            color: 'from-yellow-500 to-orange-500'
+        { 
+            label: 'Total XP', 
+            value: user?.xp || 0, 
+            icon: Star, 
+            color: 'from-yellow-500 to-orange-500',
+            isReal: true 
         },
-        {
-            label: 'Study Time',
-            value: stats?.studyTime || '0m',
-            icon: Clock,
-            color: 'from-green-500 to-emerald-500'
+        { 
+            label: 'Badges Earned', 
+            value: user?.badges?.length || 0, 
+            icon: Trophy, 
+            color: 'from-green-500 to-emerald-500',
+            isReal: true 
         },
-        {
-            label: 'Quests Done',
-            value: stats?.questsCompleted || 0,
-            icon: Target,
-            color: 'from-blue-500 to-cyan-500'
+        { 
+            label: 'Modules Done', 
+            value: user?.completedModules?.length || 0, 
+            icon: Target, 
+            color: 'from-blue-500 to-cyan-500',
+            isReal: true 
         },
     ];
-
-    const hasActivity = (user?.xp || 0) > 0 || (stats?.recentActivity?.length || 0) > 0;
 
     return (
         <motion.div
@@ -99,10 +80,7 @@ export default function Dashboard() {
                             Welcome back, <span className="gradient-text">{user?.profile?.name || 'Developer'}</span>! 👋
                         </h1>
                         <p className="text-white/60">
-                            {hasActivity
-                                ? `Level ${user?.level || 1} • ${user?.xp || 0} XP earned`
-                                : 'Ready to start your learning journey?'
-                            }
+                            Ready to continue your learning journey?
                         </p>
                     </div>
                     <div className="flex items-center gap-4">
@@ -146,27 +124,22 @@ export default function Dashboard() {
                 </div>
             </motion.div>
 
-            {/* Quick Stats - REAL DATA */}
+            {/* Quick Stats - REAL DATA ONLY */}
             <motion.div variants={item} className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {loading ? (
-                    <div className="col-span-4 flex justify-center py-8">
-                        <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
-                    </div>
-                ) : (
-                    quickStats.map((stat) => (
-                        <div key={stat.label} className="glass-card-hover p-4 rounded-xl">
-                            <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${stat.color} flex items-center justify-center mb-3`}>
-                                <stat.icon className="w-5 h-5 text-white" />
-                            </div>
-                            <p className="text-2xl font-bold text-white">{stat.value}</p>
-                            <p className="text-sm text-white/60">{stat.label}</p>
+                {actualStats.map((stat) => (
+                    <div key={stat.label} className="glass-card-hover p-4 rounded-xl">
+                        <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${stat.color} flex items-center justify-center mb-3`}>
+                            <stat.icon className="w-5 h-5 text-white" />
                         </div>
-                    ))
-                )}
+                        <p className="text-2xl font-bold text-white">{stat.value}</p>
+                        <p className="text-sm text-white/60">{stat.label}</p>
+                    </div>
+                ))}
             </motion.div>
 
-            {/* Quick Actions */}
+            {/* Main Action Cards */}
             <motion.div variants={item} className="grid md:grid-cols-3 gap-4">
+                {/* Learning Roadmap Card */}
                 <Link to="/roadmap" className="glass-card-hover p-6 rounded-2xl group">
                     <div className="flex items-start justify-between mb-4">
                         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
@@ -176,13 +149,18 @@ export default function Dashboard() {
                     </div>
                     <h3 className="text-lg font-bold text-white mb-2">Learning Roadmap</h3>
                     <p className="text-sm text-white/60 mb-4">
-                        Upload your resume for AI-powered skill analysis
+                        Continue your personalized path
                     </p>
-                    <div className="px-3 py-1.5 bg-blue-500/20 border border-blue-500/30 rounded-lg w-fit">
-                        <span className="text-sm text-blue-300">Start analysis</span>
+                    <div className="w-full bg-white/10 rounded-full h-2 mb-2">
+                        <div 
+                            className="h-2 rounded-full bg-gradient-to-r from-blue-500 to-purple-500"
+                            style={{ width: '0%' }}
+                        />
                     </div>
+                    <p className="text-xs text-white/40">No roadmap created yet</p>
                 </Link>
 
+                {/* Gamified Quests Card */}
                 <Link to="/assessments" className="glass-card-hover p-6 rounded-2xl group">
                     <div className="flex items-start justify-between mb-4">
                         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center">
@@ -196,15 +174,11 @@ export default function Dashboard() {
                     </p>
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 border border-purple-500/30 rounded-lg w-fit">
                         <Sparkles className="w-4 h-4 text-purple-400" />
-                        <span className="text-sm text-purple-300">
-                            {(stats?.questsCompleted || 0) > 0
-                                ? `${stats?.questsCompleted} completed`
-                                : 'No active quests'
-                            }
-                        </span>
+                        <span className="text-sm text-purple-300">No active quests</span>
                     </div>
                 </Link>
 
+                {/* Aptitude Test Card */}
                 <Link to="/aptitude" className="glass-card-hover p-6 rounded-2xl group">
                     <div className="flex items-start justify-between mb-4">
                         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-teal-500 flex items-center justify-center">
@@ -222,11 +196,11 @@ export default function Dashboard() {
                 </Link>
             </motion.div>
 
-            {/* Recent Activity - REAL DATA */}
+            {/* Recent Activity - Only show if there's actual activity */}
             <motion.div variants={item} className="glass-card p-6 rounded-2xl">
                 <h2 className="text-xl font-bold text-white mb-4">Recent Activity</h2>
-
-                {!hasActivity && (
+                
+                {user?.xp === 0 && (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                         <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
                             <AlertCircle className="w-8 h-8 text-white/40" />
@@ -235,7 +209,7 @@ export default function Dashboard() {
                         <p className="text-sm text-white/40 mb-4">
                             Start your learning journey to see your progress here
                         </p>
-                        <Link
+                        <Link 
                             to="/roadmap"
                             className="px-4 py-2 bg-primary-500 hover:bg-primary-600 rounded-lg text-white text-sm font-medium transition-colors"
                         >
@@ -244,69 +218,28 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {hasActivity && stats?.recentActivity && stats.recentActivity.length > 0 && (
+                {user?.xp > 0 && user.badges && user.badges.length > 0 && (
                     <div className="space-y-3">
-                        {stats.recentActivity.map((activity, index) => (
-                            <div key={index} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors">
-                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${activity.type === 'xp_earned'
-                                        ? 'bg-primary-500/20 text-primary-400'
-                                        : activity.type === 'badge_earned'
-                                            ? 'bg-yellow-500/20 text-yellow-400'
-                                            : activity.type === 'quest_completed'
-                                                ? 'bg-green-500/20 text-green-400'
-                                                : 'bg-purple-500/20 text-purple-400'
-                                    }`}>
-                                    {activity.type === 'xp_earned' ? (
-                                        <TrendingUp className="w-5 h-5" />
-                                    ) : activity.type === 'badge_earned' ? (
-                                        <Trophy className="w-5 h-5" />
-                                    ) : activity.type === 'quest_completed' ? (
-                                        <Target className="w-5 h-5" />
-                                    ) : (
-                                        <Star className="w-5 h-5" />
-                                    )}
+                        {user.badges.slice(0, 3).map((badge, index) => (
+                            <div key={badge.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors">
+                                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center flex-shrink-0">
+                                    <Trophy className="w-5 h-5 text-white" />
                                 </div>
                                 <div className="flex-1">
-                                    <p className="text-white font-medium">{activity.description}</p>
-                                    <p className="text-sm text-white/40">{activity.time}</p>
+                                    <p className="text-white font-medium">{badge.name}</p>
+                                    <p className="text-sm text-white/60">{badge.description}</p>
                                 </div>
-                                {activity.xp && (
-                                    <span className="text-primary-400 font-semibold">+{activity.xp} XP</span>
-                                )}
+                                <span className="text-xs text-white/40">
+                                    {new Date(badge.earnedAt).toLocaleDateString()}
+                                </span>
                             </div>
                         ))}
-                    </div>
-                )}
-
-                {/* Show badges if earned */}
-                {hasActivity && user?.badges && user.badges.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-white/10">
-                        <h3 className="text-lg font-bold text-white mb-3">Badges Earned</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            {user.badges.map((badge) => (
-                                <div key={badge.id} className="flex flex-col items-center p-3 rounded-lg bg-white/5 text-center">
-                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center mb-2">
-                                        <Trophy className="w-6 h-6 text-white" />
-                                    </div>
-                                    <p className="text-sm font-medium text-white">{badge.name}</p>
-                                    <p className="text-xs text-white/40">{badge.description}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* No activity log but has some XP */}
-                {hasActivity && (!stats?.recentActivity || stats.recentActivity.length === 0) && (
-                    <div className="text-center py-6">
-                        <p className="text-white/60">You have {user?.xp || 0} XP but no detailed activity logs yet.</p>
-                        <p className="text-sm text-white/40">Complete quests and assessments to see detailed activity here.</p>
                     </div>
                 )}
             </motion.div>
 
             {/* Getting Started Guide - For new users */}
-            {!hasActivity && (
+            {user?.xp === 0 && (
                 <motion.div variants={item} className="glass-card p-6 rounded-2xl border border-primary-500/20">
                     <div className="flex items-start gap-4">
                         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-purple-500 flex items-center justify-center flex-shrink-0">

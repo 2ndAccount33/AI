@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.js';
+import axios from 'axios';
 
 const router = Router();
 
-// Demo jobs data (in production, this would come from a database or external API)
+// Adzuna API configuration
+const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID;
+const ADZUNA_API_KEY = process.env.ADZUNA_API_KEY;
+
+// Demo jobs fallback (used when Adzuna API is not configured)
 const demoJobs = [
     {
         id: '1',
@@ -55,7 +60,112 @@ const demoJobs = [
     },
 ];
 
-// Get jobs with filtering and pagination
+// Helper: extract likely skills from job description text
+function extractSkillsFromDescription(description: string): string[] {
+    const knownSkills = [
+        'javascript', 'typescript', 'react', 'angular', 'vue', 'node.js', 'nodejs',
+        'python', 'django', 'flask', 'java', 'spring', 'go', 'golang', 'rust',
+        'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'terraform',
+        'sql', 'postgresql', 'mongodb', 'redis', 'graphql', 'rest',
+        'git', 'ci/cd', 'agile', 'scrum', 'linux', 'html', 'css',
+        'machine learning', 'deep learning', 'tensorflow', 'pytorch',
+        'c++', 'c#', '.net', 'swift', 'kotlin', 'ruby', 'php', 'laravel'
+    ];
+    const descLower = description.toLowerCase();
+    return knownSkills.filter(skill => descLower.includes(skill));
+}
+
+// ============================================================
+// REAL JOB SEARCH via Adzuna API (with fallback to demo data)
+// ============================================================
+router.get('/search', authenticate, async (req, res, next) => {
+    try {
+        const { skills, location = 'us', page = '1' } = req.query;
+        const query = (skills as string) || 'developer';
+
+        // If Adzuna API keys are configured, use real API
+        if (ADZUNA_APP_ID && ADZUNA_API_KEY) {
+            try {
+                const country = (location as string).toLowerCase() === 'remote' ? 'us' : (location as string).toLowerCase();
+                const url = `https://api.adzuna.com/v1/api/jobs/${country}/search/${page}`;
+
+                const response = await axios.get(url, {
+                    params: {
+                        app_id: ADZUNA_APP_ID,
+                        app_key: ADZUNA_API_KEY,
+                        results_per_page: 20,
+                        what: query,
+                        'content-type': 'application/json'
+                    }
+                });
+
+                // Transform Adzuna response to our format
+                const jobs = response.data.results.map((job: any) => ({
+                    id: String(job.id),
+                    title: job.title,
+                    company: job.company?.display_name || 'Unknown Company',
+                    location: job.location?.display_name || 'Remote',
+                    type: job.contract_time === 'full_time' ? 'full-time'
+                        : job.contract_time === 'part_time' ? 'part-time'
+                            : job.contract_type === 'contract' ? 'contract' : 'full-time',
+                    salary: job.salary_min && job.salary_max
+                        ? `$${Math.round(job.salary_min / 1000)}k - $${Math.round(job.salary_max / 1000)}k`
+                        : 'Not specified',
+                    requirements: extractSkillsFromDescription(job.description || ''),
+                    preferred: [],
+                    description: job.description?.substring(0, 500) || '',
+                    url: job.redirect_url,
+                    postedAt: job.created,
+                }));
+
+                console.log(`✅ Adzuna API returned ${jobs.length} jobs for query: "${query}"`);
+
+                return res.json({
+                    success: true,
+                    data: {
+                        items: jobs,
+                        total: response.data.count || jobs.length,
+                        page: parseInt(page as string, 10),
+                        pageSize: 20,
+                        totalPages: Math.ceil((response.data.count || jobs.length) / 20),
+                        source: 'adzuna',
+                    },
+                });
+            } catch (apiError: any) {
+                console.warn(`⚠️ Adzuna API failed: ${apiError.message}. Falling back to demo data.`);
+                // Fall through to demo data below
+            }
+        }
+
+        // Fallback: filter demo jobs by skills
+        console.log(`ℹ️ Using demo job data (Adzuna API not configured or failed)`);
+        const queryLower = query.toLowerCase();
+        const matchingJobs = demoJobs.filter(job =>
+            job.title.toLowerCase().includes(queryLower) ||
+            job.requirements.some(r => r.toLowerCase().includes(queryLower)) ||
+            job.description.toLowerCase().includes(queryLower)
+        );
+
+        // Return matches, or all demo jobs if no match
+        const results = matchingJobs.length > 0 ? matchingJobs : demoJobs;
+
+        res.json({
+            success: true,
+            data: {
+                items: results,
+                total: results.length,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+                source: 'demo',
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get jobs with filtering and pagination (original route, kept for backward compatibility)
 router.get('/', authenticate, async (req, res, next) => {
     try {
         const { page = '1', pageSize = '10', search, type, location } = req.query;
