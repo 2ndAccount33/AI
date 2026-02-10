@@ -43,7 +43,7 @@ async def analyze_skill_gap(request: SkillGapRequest):
         
         # Initialize LLM
         llm = ChatOpenAI(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o",
             temperature=0.3,
             api_key=settings.openai_api_key
         )
@@ -90,53 +90,87 @@ Output as JSON with this structure:
             "preferred": ", ".join(job_description.preferred),
         })
         
-        # Parse gap analysis (simplified - in production use proper parsing)
+        # Parse LLM response to get actual gaps
+        import json
+        
+        # Parse LLM response to get actual gaps
+        import json
+        
+        response_text = gap_result.content.strip()
+        
+        # Clean JSON if wrapped in markdown
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+        
+        gap_data = json.loads(response_text)
+        
+        # Build gaps from LLM analysis
+        gaps = []
+        for gap_item in gap_data.get("gaps", []):
+            gaps.append(SkillGap(
+                skill=gap_item.get("skill", "Unknown"),
+                priority=gap_item.get("priority", "medium"),
+                reason=gap_item.get("reason", "Identified gap")
+            ))
+        
         analysis = SkillGapAnalysis(
-            current_skills=resume_data.skills,
-            required_skills=job_description.requirements,
-            gaps=[
-                SkillGap(skill="TypeScript", priority="high", reason="Required for type safety"),
-                SkillGap(skill="AWS", priority="high", reason="Cloud deployment needed"),
-                SkillGap(skill="System Design", priority="medium", reason="Senior role requirement"),
-            ]
+            current_skills=gap_data.get("current_skills", resume_data.skills),
+            required_skills=gap_data.get("required_skills", job_description.requirements),
+            gaps=gaps
         )
-        
-        # Generate learning path with resources
-        learning_path: List[LearningStage] = []
-        
-        for i, gap in enumerate(analysis.gaps):
-            # Search for learning resources
-            resources = await search_learning_resources(gap.skill)
             
-            stage = LearningStage(
-                id=f"stage-{uuid.uuid4().hex[:8]}",
-                stage=i + 1,
-                skill=gap.skill,
-                estimated_hours=15 + (5 * i),  # Increase for later stages
-                resources=resources[:3],  # Top 3 resources
-                milestones=[
-                    f"Complete {gap.skill} fundamentals",
-                    f"Build a project using {gap.skill}",
-                    f"Pass {gap.skill} assessment"
-                ],
-                xp_reward=300 + (100 * i),
-                status="available" if i == 0 else "locked"
-            )
-            learning_path.append(stage)
-        
-        total_hours = sum(stage.estimated_hours for stage in learning_path)
-        
-        return SkillGapResponse(
-            resume_data=resume_data,
-            job_description=job_description,
-            analysis=analysis,
-            learning_path=learning_path,
-            total_estimated_hours=total_hours,
-            recommended_pace="10 hours/week"
-        )
-        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Improved Fallback: If LLM fails (quota, network, etc.), perform manual analysis
+        print(f"Skill Gap Analysis failed: {e}. Using manual fallback.")
+        
+        try:
+            # Manual set-based comparison
+            resume_skills = set(s.lower() for s in resume_data.skills)
+            required_skills = set(s.lower() for s in job_description.requirements)
+            missing = required_skills - resume_skills
+            
+            gaps = [
+                SkillGap(skill=s.title(), priority="high", reason="Required skill not found in resume (Manual Analysis)")
+                for s in missing
+            ]
+            
+            analysis = SkillGapAnalysis(
+                current_skills=resume_data.skills,
+                required_skills=job_description.requirements,
+                gaps=gaps
+            )
+            
+            # Generate fallback learning path
+            learning_path = []
+            for i, gap in enumerate(gaps):
+                resources = await search_learning_resources(gap.skill)
+                stage = LearningStage(
+                    id=f"fallback-stage-{uuid.uuid4().hex[:8]}",
+                    stage=i + 1,
+                    skill=gap.skill,
+                    estimated_hours=10,
+                    resources=resources[:3],
+                    milestones=[f"Learn {gap.skill} basics", f"Build {gap.skill} project"],
+                    xp_reward=300,
+                    status="available" if i == 0 else "locked"
+                )
+                learning_path.append(stage)
+                
+            return SkillGapResponse(
+                resume_data=resume_data,
+                job_description=job_description,
+                analysis=analysis,
+                learning_path=learning_path,
+                total_estimated_hours=len(gaps) * 10,
+                recommended_pace="Self-paced"
+            )
+            
+        except Exception as fallback_error:
+            # If even fallback fails, then raise 500
+            print(f"Fallback failed: {fallback_error}")
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
 @router.post("/generate-stages")

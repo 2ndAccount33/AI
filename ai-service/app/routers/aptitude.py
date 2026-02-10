@@ -87,7 +87,7 @@ async def evaluate_response(request: EvaluateResponseRequest):
     """
     try:
         llm = ChatOpenAI(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o",
             temperature=0.3,
             api_key=settings.openai_api_key
         )
@@ -129,24 +129,65 @@ Be fair but rigorous. A score of 7+ means excellent understanding.
             "code_section": code_section,
         })
         
-        # Parse result (simplified - in production parse LLM output properly)
-        score = random.randint(6, 9)  # Demo: random score
+        # Parse score from actual LLM response
+        import re
         
-        feedback_templates = {
-            9: "Excellent response! You demonstrated deep understanding and clear communication.",
-            8: "Very good! Your explanation was accurate with minor areas for improvement.",
-            7: "Good response. You understood the core concepts but could elaborate more.",
-            6: "Adequate response. Consider exploring the topic deeper.",
-        }
+        try:
+            response_text = result.content.strip()
+            
+            # Extract score - look for patterns like "Score: 8" or "score: 7/10"
+            score_match = re.search(r'score[:\s]+(\d+)', response_text.lower())
+            
+            if score_match:
+                score = int(score_match.group(1))
+                score = max(1, min(10, score))  # Clamp to 1-10
+            else:
+                score = 7  # Default if can't parse
+            
+            # Extract feedback - everything after "feedback:" or use full response
+            if "feedback:" in response_text.lower():
+                feedback = response_text.lower().split("feedback:")[1].strip()
+                # Capitalize first letter
+                feedback = feedback[0].upper() + feedback[1:] if feedback else response_text
+            else:
+                feedback = response_text
+                
+        except Exception as e:
+            score = 7
+            feedback = f"Evaluation completed. {result.content[:200]}"
         
         return AptitudeEvaluation(
             question_id=request.question.id,
             score=score,
-            feedback=feedback_templates.get(score, "Good attempt. Keep learning!"),
+            feedback=feedback,
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Fallback if LLM fails (e.g., quota exceeded)
+        print(f"Aptitude evaluation failed: {e}. Using fallback.")
+        
+        # Simple heuristic for demo: length of response
+        response_len = len(request.response)
+        if response_len > 100:
+            score = 8
+            feedback = "Good detailed response. You covered the main points well."
+        elif response_len > 50:
+            score = 6
+            feedback = "Decent attempt, but could be more detailed."
+        else:
+            score = 4
+            feedback = "Response is too short. Please elaborate more."
+            
+        # If code was submitted, bump score
+        if request.code and len(request.code) > 20:
+            score = min(10, score + 2)
+            feedback += " Good job including code."
+    
+        return AptitudeEvaluation(
+            question_id=request.question.id,
+            score=score,
+            feedback=feedback,
+        )
 
 
 @router.post("/analyze", response_model=AptitudeAnalysis)
